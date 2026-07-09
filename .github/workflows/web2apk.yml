@@ -1,0 +1,415 @@
+name: Web2APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      web_url:
+        description: "URL Website"
+        required: true
+      app_name:
+        description: "Nama Aplikasi"
+        required: true
+      icon_url:
+        description: "Icon Url"
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: "latest"
+
+      - name: Install Cordova
+        run: npm install -g cordova
+
+      - name: Create Cordova Project
+        run: |
+          APP_NAME="${{ github.event.inputs.app_name }}"
+          PKG=$(echo "com.putramodule.$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd '[:alnum:]_')")
+          cordova create myapp $PKG "$APP_NAME"
+
+      - name: Add Android Platform
+        run: |
+          cd myapp
+          cordova platform add android@latest
+          cordova plugin add cordova-plugin-inappbrowser
+          cordova plugin add cordova-plugin-network-information
+          cordova plugin add cordova-plugin-splashscreen
+
+      - name: Configure Config.xml
+        run: |
+          APP_NAME="${{ github.event.inputs.app_name }}"
+          WEB_URL="${{ github.event.inputs.web_url }}"
+
+          cat > myapp/config.xml << 'EOF'
+          <?xml version='1.0' encoding='utf-8'?>
+          <widget id="com.putramodule.APP_NAME_LOWER" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+              <name>APP_NAME</name>
+              <description>Modified By Putra</description>
+              <author email="putramodule@gmail.com" href="WEB_URL">
+                  Web2APK
+              </author>
+              <content src="WEB_URL" />
+              <access origin="*" />
+              <allow-intent href="http://*/*" />
+              <allow-intent href="https://*/*" />
+              <allow-navigation href="*" />
+              
+              <preference name="StatusBarOverlaysWebView" value="true" />
+              <preference name="StatusBarStyle" value="lightcontent" />
+              <preference name="Orientation" value="portrait" />
+              <preference name="Fullscreen" value="false" />
+              <preference name="SplashMaintainAspectRatio" value="true" />
+              <preference name="SplashShowOnlyFirstTime" value="false" />
+              <preference name="SplashScreen" value="screen" />
+              
+              <icon src="www/icon.png" />
+              
+              <platform name="android">
+                  <preference name="android-minSdkVersion" value="21" />
+                  <preference name="android-targetSdkVersion" value="33" />
+                  <preference name="android-compileSdkVersion" value="33" />
+                  <preference name="android-buildToolsVersion" value="33.0.2" />
+              </platform>
+          </widget>
+          EOF
+
+          APP_NAME_LOWER=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd '[:alnum:]_')
+          sed -i "s/APP_NAME_LOWER/$APP_NAME_LOWER/g" myapp/config.xml
+          sed -i "s/APP_NAME/$APP_NAME/g" myapp/config.xml
+          sed -i "s#WEB_URL#$WEB_URL#g" myapp/config.xml
+
+      - name: Create Custom Index.html
+        run: |
+          APP_NAME="${{ github.event.inputs.app_name }}"
+          WEB_URL="${{ github.event.inputs.web_url }}"
+
+          cat > myapp/www/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+              <meta http-equiv="Content-Security-Policy" content="default-src *; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'">
+              <title>APP_NAME</title>
+              <style>
+                  * {
+                      margin: 0;
+                      padding: 0;
+                      box-sizing: border-box;
+                  }
+                  
+                  body {
+                      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+                      background: #ffffff;
+                      margin: 0;
+                      padding: 0;
+                      overflow: hidden;
+                      height: 100vh;
+                  }
+                  
+                  #splash-screen {
+                      position: fixed;
+                      top: 0;
+                      left: 0;
+                      width: 100%;
+                      height: 100%;
+                      background: #ffffff;
+                      display: flex;
+                      flex-direction: column;
+                      justify-content: center;
+                      align-items: center;
+                      z-index: 9999;
+                      transition: opacity 0.8s ease;
+                  }
+                  
+                  #splash-screen .app-icon {
+                      width: 120px;
+                      height: 120px;
+                      border-radius: 24px;
+                      margin-bottom: 30px;
+                      animation: scaleIn 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+                      background: #2196F3;
+                      display: flex;
+                      align-items: center;
+                      justify-content: center;
+                      font-size: 60px;
+                      color: white;
+                      font-weight: bold;
+                  }
+                  
+                  #splash-screen .app-name {
+                      font-size: 28px;
+                      font-weight: 600;
+                      color: #1a1a1a;
+                      margin-bottom: 20px;
+                      animation: fadeInUp 0.8s ease;
+                  }
+                  
+                  #splash-screen .loading-dots {
+                      display: flex;
+                      gap: 8px;
+                      animation: fadeInUp 0.8s ease 0.2s both;
+                  }
+                  
+                  #splash-screen .loading-dots span {
+                      width: 12px;
+                      height: 12px;
+                      border-radius: 50%;
+                      background: #2196F3;
+                      animation: bounce 1.4s ease-in-out infinite both;
+                  }
+                  
+                  #splash-screen .loading-dots span:nth-child(1) {
+                      animation-delay: 0s;
+                  }
+                  #splash-screen .loading-dots span:nth-child(2) {
+                      animation-delay: 0.2s;
+                  }
+                  #splash-screen .loading-dots span:nth-child(3) {
+                      animation-delay: 0.4s;
+                  }
+                  
+                  @keyframes scaleIn {
+                      0% { transform: scale(0.5); opacity: 0; }
+                      100% { transform: scale(1); opacity: 1; }
+                  }
+                  
+                  @keyframes fadeInUp {
+                      0% { transform: translateY(20px); opacity: 0; }
+                      100% { transform: translateY(0); opacity: 1; }
+                  }
+                  
+                  @keyframes bounce {
+                      0%, 80%, 100% { transform: scale(0.3); opacity: 0.5; }
+                      40% { transform: scale(1); opacity: 1; }
+                  }
+                  
+                  #webview-container {
+                      width: 100%;
+                      height: 100vh;
+                      display: none;
+                  }
+                  
+                  #webview-container iframe {
+                      width: 100%;
+                      height: 100%;
+                      border: none;
+                  }
+                  
+                  .no-connection {
+                      display: none;
+                      position: fixed;
+                      top: 0;
+                      left: 0;
+                      width: 100%;
+                      height: 100%;
+                      background: rgba(0,0,0,0.5);
+                      justify-content: center;
+                      align-items: center;
+                      z-index: 10000;
+                  }
+                  
+                  .no-connection .dialog {
+                      background: white;
+                      padding: 30px;
+                      border-radius: 16px;
+                      max-width: 320px;
+                      text-align: center;
+                      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                  }
+                  
+                  .no-connection .dialog h3 {
+                      margin-bottom: 10px;
+                      color: #1a1a1a;
+                      font-size: 20px;
+                  }
+                  
+                  .no-connection .dialog p {
+                      color: #666;
+                      margin-bottom: 20px;
+                      font-size: 14px;
+                  }
+                  
+                  .no-connection .dialog button {
+                      background: #2196F3;
+                      color: white;
+                      border: none;
+                      padding: 12px 30px;
+                      border-radius: 8px;
+                      font-size: 16px;
+                      font-weight: 600;
+                      cursor: pointer;
+                      transition: background 0.3s;
+                  }
+                  
+                  .no-connection .dialog button:hover {
+                      background: #1976D2;
+                  }
+              </style>
+          </head>
+          <body>
+              <div id="splash-screen">
+                  <div class="app-icon">🌐</div>
+                  <div class="app-name">APP_NAME</div>
+                  <div class="loading-dots">
+                      <span></span>
+                      <span></span>
+                      <span></span>
+                  </div>
+              </div>
+              
+              <div id="webview-container">
+                  <iframe id="webview" src="WEB_URL"></iframe>
+              </div>
+              
+              <div id="no-connection" class="no-connection">
+                  <div class="dialog">
+                      <h3>⚠️ Gagal Terhubung</h3>
+                      <p>Tidak ada koneksi internet. Periksa koneksi Anda dan coba lagi.</p>
+                      <button onclick="checkConnection()">Coba Lagi</button>
+                  </div>
+              </div>
+              
+              <script>
+                  document.addEventListener('DOMContentLoaded', function() {
+                      checkConnection();
+                  });
+                  
+                  function checkConnection() {
+                      document.getElementById('no-connection').style.display = 'none';
+                      
+                      if (navigator.onLine) {
+                          setTimeout(function() {
+                              var splash = document.getElementById('splash-screen');
+                              splash.style.opacity = '0';
+                              setTimeout(function() {
+                                  splash.style.display = 'none';
+                                  document.getElementById('webview-container').style.display = 'block';
+                              }, 800);
+                          }, 1500);
+                      } else {
+                          document.getElementById('no-connection').style.display = 'flex';
+                      }
+                  }
+                  
+                  window.addEventListener('online', function() {
+                      document.getElementById('no-connection').style.display = 'none';
+                      checkConnection();
+                  });
+                  
+                  window.addEventListener('offline', function() {
+                      document.getElementById('no-connection').style.display = 'flex';
+                  });
+                  
+                  document.getElementById('webview').addEventListener('load', function() {
+                      try {
+                          var links = this.contentDocument.getElementsByTagName('a');
+                          for (var i = 0; i < links.length; i++) {
+                              if (links[i].target !== '_blank') {
+                                  links[i].target = '_self';
+                              }
+                          }
+                      } catch(e) {
+                      }
+                  });
+              </script>
+          </body>
+          </html>
+          EOF
+
+          sed -i "s/APP_NAME/$APP_NAME/g" myapp/www/index.html
+          sed -i "s#WEB_URL#$WEB_URL#g" myapp/www/index.html
+
+      - name: Download Icon
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick
+
+          curl -L \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/octet-stream" \
+            "${{ github.event.inputs.icon_url }}" \
+            -o myapp/www/icon_raw
+
+          convert myapp/www/icon_raw -resize 512x512 myapp/www/icon.png
+
+          mkdir -p myapp/res
+
+          for size in 36 48 72 96 144 192 512; do
+              mkdir -p myapp/platforms/android/app/src/main/res/mipmap-${size}x${size}
+              convert myapp/www/icon.png -resize ${size}x${size} myapp/platforms/android/app/src/main/res/mipmap-${size}x${size}/ic_launcher.png
+              mkdir -p myapp/platforms/android/app/src/main/res/mipmap-${size}x${size}
+              convert myapp/www/icon.png -resize ${size}x${size} -background none -vignette 0x0 myapp/platforms/android/app/src/main/res/mipmap-${size}x${size}/ic_launcher_round.png
+          done
+
+      - name: Create Splash Screen Assets
+        run: |
+          cd myapp
+          cordova plugin add cordova-plugin-splashscreen
+
+          cat > www/splash.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+              <style>
+                  body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #ffffff; }
+                  .splash { text-align: center; }
+                  .splash .icon { font-size: 80px; }
+                  .splash h1 { font-size: 24px; color: #1a1a1a; margin-top: 20px; }
+                  .splash .loading { margin-top: 30px; display: flex; justify-content: center; gap: 8px; }
+                  .splash .loading span { width: 10px; height: 10px; border-radius: 50%; background: #2196F3; animation: bounce 1.4s ease-in-out infinite both; }
+                  .splash .loading span:nth-child(1) { animation-delay: 0s; }
+                  .splash .loading span:nth-child(2) { animation-delay: 0.2s; }
+                  .splash .loading span:nth-child(3) { animation-delay: 0.4s; }
+                  @keyframes bounce { 0%,80%,100% { transform: scale(0.3); opacity: 0.5; } 40% { transform: scale(1); opacity: 1; } }
+              </style>
+          </head>
+          <body>
+              <div class="splash">
+                  <div class="icon">🌐</div>
+                  <h1>APP_NAME</h1>
+                  <div class="loading"><span></span><span></span><span></span></div>
+              </div>
+          </body>
+          </html>
+          EOF
+
+          sed -i "s/APP_NAME/${{ github.event.inputs.app_name }}/g" www/splash.html
+
+      - name: Build APK
+        run: |
+          cd myapp
+          cordova build android --release -- --packageType=apk
+
+      - name: Sign APK
+        run: |
+          cd myapp/platforms/android/app/build/outputs/apk/release
+
+          if [ ! -f "myapp.keystore" ]; then
+            keytool -genkey -v -keystore myapp.keystore -alias myapp -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Web2APK, OU=Dev, O=Web2APK, L=City, S=State, C=ID"
+          fi
+
+          jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 -keystore myapp.keystore -storepass android -keypass android app-release-unsigned.apk myapp
+          zipalign -v 4 app-release-unsigned.apk app-release.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: web2apk-cordova-release
+          path: myapp/platforms/android/app/build/outputs/apk/release/app-release.apk
