@@ -1,10 +1,10 @@
-name: Build React Native APK
+name: Build Cordova APK
 
 on:
   workflow_dispatch:
     inputs:
       zip_url:
-        description: "URL download ZIP project React Native"
+        description: "URL download ZIP project Cordova"
         required: true
       tag:
         description: "Tag build"
@@ -14,7 +14,7 @@ on:
         required: true
         default: "release"
       only_analyze:
-        description: "Hanya jalankan lint (true/false)"
+        description: "Hanya jalankan analyze (true/false)"
         required: false
         default: "false"
 
@@ -89,105 +89,106 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: "latest"
 
-      - name: Setup Node.js dependencies
+      - name: Install Cordova
+        run: |
+          npm install -g cordova
+
+      - name: Analyze Project Code
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          if [ -f "package.json" ]; then
-            npm install
+          if [ -f "config.xml" ]; then
+            echo "[RESULT_ANALYZE]"
+            echo "✅ config.xml ditemukan"
+            echo "📋 Project Info:"
+            cordova info > analyze_report.txt 2>&1 || true
+            cat analyze_report.txt
+            echo "[END_RESULT_ANALYZE]"
+            rm -f analyze_report.txt
           else
-            echo "❌ package.json tidak ditemukan!"
-            exit 1
-          fi
-
-      - name: Lint Project Code
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          if [ -f "package.json" ]; then
-            if grep -q '"lint"' package.json; then
-              npm run lint > lint_report.txt 2>&1 || true
-              echo "[RESULT_LINT]"
-              cat lint_report.txt
-              echo "[END_RESULT_LINT]"
-              rm -f lint_report.txt
-            else
-              echo "[RESULT_LINT]"
-              echo "⚠️ Script lint tidak ditemukan di package.json"
-              echo "[END_RESULT_LINT]"
-            fi
-          else
-            echo "[RESULT_LINT]"
-            echo "❌ package.json tidak ditemukan."
-            echo "[END_RESULT_LINT]"
+            echo "[RESULT_ANALYZE]"
+            echo "❌ config.xml tidak ditemukan."
+            echo "[END_RESULT_ANALYZE]"
           fi
 
       - name: Stop if Analyze Only
         if: ${{ github.event.inputs.only_analyze == 'true' }}
         run: exit 1
 
-      - name: Build Android APK
+      - name: Prepare Android Platform
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          if [ -f "android/gradlew" ]; then
-            echo "✅ Project React Native terdeteksi"
-            cd android
-            chmod +x gradlew
+          if [ -f "config.xml" ]; then
+            echo "📱 Menambahkan platform Android..."
             
-            if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
-              ./gradlew assembleDebug
-            else
-              ./gradlew assembleRelease
+            if [ -d "platforms/android" ]; then
+              echo "⚠️ Platform Android sudah ada, menghapus..."
+              cordova platform remove android
+            fi
+            
+            cordova platform add android
+            
+            if [ -d "plugins" ]; then
+              echo "🔌 Menginstall plugins..."
+              cordova prepare
             fi
           else
-            echo "❌ Folder android/gradlew tidak ditemukan!"
+            echo "❌ config.xml tidak ditemukan!"
             exit 1
           fi
 
-      - name: Build Android AAB (Release only)
-        if: ${{ github.event.inputs.build_type == 'release' }}
+      - name: Build APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          if [ -f "android/gradlew" ]; then
-            cd android
-            chmod +x gradlew
-            ./gradlew bundleRelease
+          if [ -f "config.xml" ]; then
+            echo "🏗️ Membangun APK..."
+            
+            if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
+              cordova build android --debug
+            else
+              echo "🔑 Mem-build release APK..."
+              
+              if [ -n "${{ secrets.ANDROID_KEYSTORE }}" ] && [ -n "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" ]; then
+                echo "✅ Menggunakan signing key dari secrets"
+                
+                echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 --decode > release.keystore
+                
+                cordova build android --release -- \
+                  --keystore=release.keystore \
+                  --storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
+                  --alias=${{ secrets.ANDROID_KEY_ALIAS }} \
+                  --password=${{ secrets.ANDROID_KEY_PASSWORD }}
+              else
+                echo "⚠️ Tidak ada signing key, build unsigned release"
+                cordova build android --release -- --keystore=release.keystore --storePassword=password --alias=alias --password=password 2>/dev/null || \
+                cordova build android --release
+              fi
+            fi
+          else
+            echo "❌ config.xml tidak ditemukan!"
+            exit 1
           fi
 
       - name: Check APK Output
         run: |
-          APK_FOUND=$(find $GITHUB_WORKSPACE -name "*.apk" | head -n 1)
-          if [ -n "$APK_FOUND" ]; then
-            APK_PATH=$(echo "$APK_FOUND" | sed "s|$GITHUB_WORKSPACE/||")
-            echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
-            echo "✅ APK ditemukan: $APK_PATH"
-          else
+          APK_FOUND=$(find $GITHUB_WORKSPACE/${{ env.PROJECT_DIR }} -name "*.apk" | head -n 1)
+          APK_PATH=$(echo "$APK_FOUND" | sed "s|$GITHUB_WORKSPACE/||")
+          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
+
+          if [ -z "$APK_FOUND" ]; then
             echo "❌ APK tidak ditemukan!"
             exit 1
-          fi
-
-      - name: Check AAB Output (Release only)
-        if: ${{ github.event.inputs.build_type == 'release' }}
-        run: |
-          AAB_FOUND=$(find $GITHUB_WORKSPACE -name "*.aab" | head -n 1)
-          if [ -n "$AAB_FOUND" ]; then
-            AAB_PATH=$(echo "$AAB_FOUND" | sed "s|$GITHUB_WORKSPACE/||")
-            echo "AAB_PATH=$AAB_PATH" >> $GITHUB_ENV
-            echo "✅ AAB ditemukan: $AAB_PATH"
+          else
+            echo "✅ APK ditemukan di: $APK_PATH"
+            ls -lh "$APK_FOUND"
           fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: react-native-${{ github.event.inputs.build_type }}-${{ github.event.inputs.tag }}
-          path: ${{ env.PROJECT_DIR }}/${{ env.APK_PATH }}
+          name: cordova-${{ github.event.inputs.build_type }}-${{ github.event.inputs.tag }}
+          path: ${{ env.APK_PATH }}
           retention-days: 1
           if-no-files-found: error
-
-      - name: Upload AAB artifact (Release only)
-        if: ${{ github.event.inputs.build_type == 'release' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: react-native-aab-${{ github.event.inputs.tag }}
-          path: ${{ env.PROJECT_DIR }}/${{ env.AAB_PATH }}
-          retention-days: 1
-          if-no-files-found: warn
